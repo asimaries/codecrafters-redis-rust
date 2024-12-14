@@ -1,15 +1,19 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Instant};
 
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::resp::{
-    resp::{parse_message, RespHandler, RespParser, Value},
-    RespError,
+use crate::{
+    resp::{
+        resp::{parse_message, RespHandler, RespParser, Value},
+        RespError,
+    },
+    storage::Storage,
 };
 
 pub struct Server {
     listener: TcpListener,
 }
+
 impl Server {
     // Create and returns Server instance with TcpListener
     pub fn new(listener: TcpListener) -> Self {
@@ -34,7 +38,7 @@ impl Server {
 
     async fn handle_client(stream: TcpStream) -> Result<(), RespError> {
         let mut handler = RespHandler::new(stream);
-        let mut storage: HashMap<String, String> = HashMap::new();
+        let mut db = Storage::new();
         loop {
             let value = handler.read_value().await.unwrap();
             println!("{:?}", value);
@@ -43,19 +47,29 @@ impl Server {
                 match command.to_lowercase().as_str() {
                     "ping" => Value::SimpleString("PONG".to_owned()),
                     "echo" => args.first().unwrap().clone().to_owned(),
-                    "set" => set(
-                        &mut storage,
-                        args.first().unwrap().clone().serialize(),
-                        Self::unpack_bulk_string(args[1].to_owned())
-                            .map_err(|e| RespError::Other(format!("{}", e)))?,
-                    ),
-                    "get" => get(&storage, args.first().unwrap().clone().serialize()),
-                    _ => panic!("Cannot Handle command {}", command),
+                    "set" => {
+                        let key = Self::unpack_bulk_string(args[0].clone())?;
+                        let value = Self::unpack_bulk_string(args[1].clone())?;
+                        let mut expires = 0;
+                        if args.len() > 2 {
+                            expires = Self::unpack_bulk_string(args[3].to_owned())?
+                                .parse::<usize>()
+                                .unwrap_or(0);
+                        };
+                        db.set(key, value, expires)
+                    }
+                    "get" => {
+                        let a = db.get(Self::unpack_bulk_string(args[0].clone())?);
+                        println!("{:?}", a);
+                        a
+                    }
+                    _ => Value::SimpleError(format!("Cannot Handle command {}", command)),
                 }
             } else {
                 return Ok(());
             };
             handler.write_value(response).await.unwrap();
+            ()
         }
     }
     fn extract_command(value: Value) -> Result<(String, Vec<Value>), RespError> {
@@ -71,18 +85,9 @@ impl Server {
     fn unpack_bulk_string(value: Value) -> Result<String, RespError> {
         match value {
             Value::BulkString(s) => Ok(s),
-            _ => Err(RespError::Other(format!("Expected Command to be a Bulk String"))),
+            _ => Err(RespError::Other(format!(
+                "Expected Command to be a Bulk String"
+            ))),
         }
-    }
-}
-
-fn set(storage: &mut HashMap<String, String>, key: String, value: String) -> Value {
-    storage.insert(key, value);
-    Value::SimpleString("OK".to_owned())
-}
-fn get(storage: &HashMap<String, String>, key: String) -> Value {
-    match storage.get(&key) {
-        Some(value) => Value::BulkString(value.to_string()),
-        None => Value::Null,
     }
 }

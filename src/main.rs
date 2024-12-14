@@ -2,6 +2,7 @@
 
 mod resp;
 mod server;
+mod storage;
 
 use anyhow::{anyhow, Result};
 
