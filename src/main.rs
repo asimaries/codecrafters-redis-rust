@@ -3,6 +3,7 @@
 mod resp;
 mod server;
 mod storage;
+mod config;
 
 use anyhow::{anyhow, Result};
 

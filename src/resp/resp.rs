@@ -17,7 +17,7 @@ pub enum Value {
     BulkString(String),
     Array(Vec<Value>),
     SimpleError(String),
-    Null
+    Null,
 }
 
 impl Value {
@@ -27,6 +27,13 @@ impl Value {
             Value::BulkString(b) => format!("${}\r\n{}\r\n", b.chars().count(), b),
             Value::SimpleError(e) => format!("-${}\r\n", e),
             Value::Null => format!("$-1\r\n"),
+            Value::Array(a) => {
+                let mut serialized = String::from(format!("*{}\r\n", a.len()));
+                for v in a {
+                    serialized.push_str(&v.clone().serialize());
+                }
+                serialized
+            }
             _ => "Unsupported Value for serialize".to_owned(),
         }
     }
@@ -74,6 +81,7 @@ pub fn parse_message(buffer: BytesMut) -> Result<(Value, usize), RespError> {
         b'+' => RespParser::parse_simple_string(buffer),
         b'$' => RespParser::parse_bulk_string(buffer),
         b'*' => RespParser::parse_array(buffer),
+        b'-' => RespParser::parse_simple_string(buffer),
         _ => Err(RespError::Other(
             format!("Unknown value type {:?}", buffer).to_owned(),
         )),
