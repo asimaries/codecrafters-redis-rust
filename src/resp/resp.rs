@@ -3,7 +3,6 @@ use std::{
     fmt::{format, Error},
 };
 
-// use anyhow::};
 use super::RespError;
 use bytes::BytesMut;
 use tokio::{
@@ -154,8 +153,9 @@ impl RespParser {
         let total_parsed = end_of_bulk_str + 2;
         return Ok((
             Value::BulkString(
-                String::from_utf8(buffer[bytes_consumed..end_of_bulk_str].to_vec())
-                    .map_err(|e| RespError::Other("Invalid UTF-8 format".to_owned()))?,
+                String::from_utf8(buffer[bytes_consumed..end_of_bulk_str].to_vec()).map_err(
+                    |e| RespError::Other(format!("Invalid UTF-8 format {:#?}", e.as_bytes())),
+                )?,
             ),
             total_parsed,
         ));

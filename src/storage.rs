@@ -1,4 +1,6 @@
-use std::{collections::HashMap, time::Instant};
+use std::{collections::HashMap, sync::Arc, time::Instant};
+
+use tokio::sync::RwLock;
 
 use crate::resp::resp::Value;
 
@@ -18,7 +20,8 @@ impl Storage {
             storage: HashMap::new(),
         }
     }
-    pub fn set(&mut self, key: String, value: String, ttl: Option<usize>) -> Value {
+
+    pub async fn set(&mut self, key: String, value: String, ttl: Option<usize>) -> Value {
         println!("key {}\nvalue {}\nexpies {:?}", key, value, ttl);
         self.storage.insert(
             key,
@@ -30,7 +33,8 @@ impl Storage {
         );
         Value::SimpleString("OK".to_owned())
     }
-    pub fn get(&self, key: String) -> Value {
+
+    pub async fn get(&self, key: String) -> Value {
         match self.storage.get(&key) {
             Some(item) => {
                 let is_expired = item.ttl.map_or(false, |ttl| {
