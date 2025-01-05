@@ -37,7 +37,7 @@ impl Server {
                     });
                 }
                 Err(e) => {
-                    println!("error: {}", e);
+                    eprintln!("error: {}", e);
                 }
             };
         }
@@ -48,7 +48,6 @@ impl Server {
         let config = Config::new();
         loop {
             let value = handler.read_value().await.unwrap();
-            println!("{:?}", value);
             let response = if let Some(v) = value {
                 let (command, args) = Self::extract_command(v).unwrap();
                 match command.to_lowercase().as_str() {
@@ -71,7 +70,6 @@ impl Server {
                             .await
                             .get(Self::unpack_bulk_string(args[0].clone())?)
                             .await;
-                        println!("{:?}", a);
                         a
                     }
                     "config" => {
@@ -103,25 +101,22 @@ impl Server {
                         let dbfilename = config.dbfilename.clone().unwrap_or_default();
                         path.push_str("/");
                         path.push_str(&dbfilename);
-                        let file = File::open(path).await;
+                        let file = File::open(&path).await;
                         let key = match file {
                             Ok(file) => {
                                 let mut buffer: [u8; 1024] = [0; 1024];
                                 let mut reader = BufReader::new(file);
                                 let buf_size = reader.read(&mut buffer).await;
-                                if buf_size.unwrap() > 0 {
+                                if !(buf_size.unwrap() > 0) {
                                     return Err(RespError::Other(format!("Cannot Handle command")));
                                 }
-                                println!("{:x?}", buffer);
 
                                 let fb_pos = buffer.iter().position(|&b| b == 0xfb).unwrap();
                                 let mut pos = fb_pos + 4;
                                 let len = buffer[pos] as usize;
                                 pos += 1;
                                 let key = &buffer[pos..(pos + len)];
-                                println!("1 {:x?}", key);
                                 let parse = String::from_utf8_lossy(key).parse().unwrap();
-                                println!("2 {:?}", parse);
                                 parse
                             }
                             Err(e) => format!("Cannot Handle command\n{}", e),

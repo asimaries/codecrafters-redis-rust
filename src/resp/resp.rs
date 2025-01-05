@@ -33,7 +33,6 @@ impl Value {
                 }
                 serialized
             }
-            _ => "Unsupported Value for serialize".to_owned(),
         }
     }
 }
