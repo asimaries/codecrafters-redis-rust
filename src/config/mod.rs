@@ -17,4 +17,20 @@ impl Config {
             dbfilename: args.get_one::<String>("dbfilename").map(|d| d.to_owned()),
         }
     }
+    
+    pub fn has_rdb(&self) -> bool {
+        println!("dir: {:?}, dbfilename: {:?}", self.dir, self.dbfilename);
+        self.dir.is_some() && self.dbfilename.is_some()
+    }
+
+    pub fn get_rdb_path(&self) -> Option<String> {
+        if self.has_rdb() {
+            return Some(format!(
+                "{}/{}",
+                self.dir.clone().unwrap(),
+                self.dbfilename.clone().unwrap()
+            ));
+        }
+        None
+    }
 }

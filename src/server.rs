@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use tokio::{
     fs::File,
@@ -27,13 +30,23 @@ impl Server {
 
     pub async fn run(&mut self) {
         let db = Arc::new(RwLock::new(Storage::new()));
+        let config = Arc::new(Config::new());
+        if config.has_rdb() {
+            let db_clone = Arc::clone(&db);
+            let config_clone = Arc::clone(&config);
+            tokio::spawn(async move {
+                let _ = db_clone.write().await.load_from_rdb(config_clone).await;
+            });
+        }
         loop {
             let stream = self.listener.accept().await;
             match stream {
                 Ok((stream, _)) => {
-                    let db_arc = Arc::clone(&db);
+                    let db_clone = Arc::clone(&db);
+                    let config_clone = Arc::clone(&config);
+
                     tokio::spawn(async move {
-                        let _ = Self::handle_client(stream, db_arc).await;
+                        let _ = Self::handle_client(stream, db_clone, config_clone).await;
                     });
                 }
                 Err(e) => {
@@ -43,9 +56,12 @@ impl Server {
         }
     }
 
-    async fn handle_client(stream: TcpStream, db: Arc<RwLock<Storage>>) -> Result<(), RespError> {
+    async fn handle_client(
+        stream: TcpStream,
+        db: Arc<RwLock<Storage>>,
+        config: Arc<Config>,
+    ) -> Result<(), RespError> {
         let mut handler = RespHandler::new(stream);
-        let config = Config::new();
         loop {
             let value = handler.read_value().await.unwrap();
             let response = if let Some(v) = value {
@@ -54,13 +70,29 @@ impl Server {
                     "ping" => Value::SimpleString("PONG".to_owned()),
                     "echo" => args.first().unwrap().clone().to_owned(),
                     "set" => {
-                        let key = Self::unpack_bulk_string(args[0].clone())?;
-                        let value = Self::unpack_bulk_string(args[1].clone())?;
-                        let mut ttl: Option<usize> = None;
+                        let key = Self::unpack_bulk_string(args.get(0).unwrap().clone())?;
+                        let value = Self::unpack_bulk_string(args.get(1).unwrap().clone())?;
+                        let mut ttl: Option<SystemTime> = None;
                         if args.len() > 3 {
-                            ttl = Self::unpack_bulk_string(args[3].to_owned())
-                                .ok()
-                                .and_then(|s| s.parse::<usize>().ok());
+                            let units = Self::unpack_bulk_string(args.get(2).unwrap().clone())?
+                                .to_lowercase();
+                            let amount =
+                                match Self::unpack_bulk_string(args.get(3).unwrap().clone()) {
+                                    Ok(str) => str.parse::<u64>().map_err(|e| {
+                                        RespError::Other(format!(
+                                            "Unable to parse RDB file\n{:?}",
+                                            e
+                                        ))
+                                    })?,
+                                    Err(_) => {
+                                        return Err(RespError::Other(format!("unexpected expiry")))
+                                    }
+                                };
+                            ttl = match units.as_str() {
+                                "px" => Some(SystemTime::now() + Duration::from_millis(amount)),
+                                "ex" => Some(SystemTime::now() + Duration::from_secs(amount)),
+                                _ => None,
+                            }
                         };
                         db.write().await.set(key, value, ttl).await
                     }
@@ -68,16 +100,18 @@ impl Server {
                         let a = db
                             .read()
                             .await
-                            .get(Self::unpack_bulk_string(args[0].clone())?)
+                            .get(Self::unpack_bulk_string(args.first().unwrap().clone())?)
                             .await;
                         a
                     }
                     "config" => {
                         if args.len() > 1 {
-                            let arg = Self::unpack_bulk_string(args[0].clone())?.to_lowercase();
+                            let arg = Self::unpack_bulk_string(args.first().unwrap().clone())?
+                                .to_lowercase();
                             match arg.as_str() {
                                 "get" => {
-                                    let param = Self::unpack_bulk_string(args[1].clone())?;
+                                    let param =
+                                        Self::unpack_bulk_string(args.get(1).unwrap().clone())?;
                                     let value = match param.as_str() {
                                         "dir" => Value::BulkString(
                                             config.dir.clone().unwrap_or_default(),
@@ -96,33 +130,7 @@ impl Server {
                             Value::SimpleError("Invalid number of arguments".to_owned())
                         }
                     }
-                    "keys" => {
-                        let mut path = config.dir.clone().unwrap_or_default();
-                        let dbfilename = config.dbfilename.clone().unwrap_or_default();
-                        path.push_str("/");
-                        path.push_str(&dbfilename);
-                        let file = File::open(&path).await;
-                        let key = match file {
-                            Ok(file) => {
-                                let mut buffer: [u8; 1024] = [0; 1024];
-                                let mut reader = BufReader::new(file);
-                                let buf_size = reader.read(&mut buffer).await;
-                                if !(buf_size.unwrap() > 0) {
-                                    return Err(RespError::Other(format!("Cannot Handle command")));
-                                }
-
-                                let fb_pos = buffer.iter().position(|&b| b == 0xfb).unwrap();
-                                let mut pos = fb_pos + 4;
-                                let len = buffer[pos] as usize;
-                                pos += 1;
-                                let key = &buffer[pos..(pos + len)];
-                                let parse = String::from_utf8_lossy(key).parse().unwrap();
-                                parse
-                            }
-                            Err(e) => format!("Cannot Handle command\n{}", e),
-                        };
-                        Value::Array(vec![Value::BulkString(key)])
-                    }
+                    "keys" => db.read().await.keys(),
                     _ => Value::SimpleError(format!("Cannot Handle command {}", command)),
                 }
             } else {
@@ -133,6 +141,7 @@ impl Server {
             ()
         }
     }
+
     fn extract_command(value: Value) -> Result<(String, Vec<Value>), RespError> {
         match value {
             Value::Array(a) => Ok((
