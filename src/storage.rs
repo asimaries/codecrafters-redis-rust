@@ -6,6 +6,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use regex::Regex;
 use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter},
@@ -16,10 +17,9 @@ use crate::{
     config::Config,
     resp::{resp::Value, RespError},
 };
-
+#[derive(Debug)]
 pub(crate) struct Item {
     pub value: Value,
-    pub created_at: Instant,
     pub ttl: Option<SystemTime>,
 }
 
@@ -35,12 +35,11 @@ impl Storage {
     }
 
     pub async fn set(&mut self, key: String, value: String, ttl: Option<SystemTime>) -> Value {
-        println!("key {}\nvalue {}\nexpies {:?}", key, value, ttl);
+        // println!("key {}\nvalue {}\nexpies {:?}", key, value, ttl);
         self.storage.insert(
             key,
             Item {
                 value: Value::BulkString(value),
-                created_at: Instant::now(),
                 ttl,
             },
         );
@@ -60,14 +59,22 @@ impl Storage {
             None => Value::Null,
         }
     }
-    pub fn keys(&self) -> Value {
-        let a = self
-            .storage
-            .keys()
-            .cloned()
+    pub fn keys(&self, pattern: String) -> Value {
+        let keys = self.storage.keys().cloned();
+        let key_resp = keys
+            .filter(|key| key.contains(&pattern.replace("*", "")))
             .map(|key| Value::BulkString(key))
             .collect::<Vec<Value>>();
-        Value::Array(a)
+
+        Value::Array(key_resp)
+    }
+    fn unpack_bulk_string(value: Value) -> Result<String, RespError> {
+        match value {
+            Value::BulkString(s) => Ok(s),
+            _ => Err(RespError::Other(format!(
+                "Expected Command to be a Bulk String"
+            ))),
+        }
     }
     pub async fn save_to_rdb(&self, config: &Config) -> Result<(), RespError> {
         if !config.has_rdb() {
@@ -119,20 +126,25 @@ impl Storage {
                 .await
                 .map_err(|e| RespError::Other(format!("Unable to parse RDB file\n{:?}", e)))?;
 
-            write_string(&mut writer, item.value.clone().serialize().as_bytes())
-                .await
-                .map_err(|e| RespError::Other(format!("Unable to parse RDB file\n{:?}", e)))?;
+            write_string(
+                &mut writer,
+                Self::unpack_bulk_string(item.value.clone())
+                    .unwrap()
+                    .as_bytes(),
+            )
+            .await
+            .map_err(|e| RespError::Other(format!("Unable to parse RDB file\n{:?}", e)))?;
         }
 
         writer.write_u8(0xFF).await.map_err(map_rdb_err)?;
-
+        let _f = writer.flush().await;
         Ok(())
     }
     pub async fn load_from_rdb(&mut self, config: Arc<Config>) -> Result<(), RespError> {
         if !config.has_rdb() {
             return Err(RespError::Other("No RDB path configured".to_owned()));
         }
-
+        let parse_err = |e| RespError::Other(format!("Cannot parse version number\n{:?}", e));
         let path = config.get_rdb_path().unwrap();
         if !Path::new(&path).exists() {
             return Ok(());
@@ -153,11 +165,10 @@ impl Storage {
             return Err(RespError::Other("Invalid RDB file".to_owned()));
         }
 
-        let version_str = std::str::from_utf8(version)
-            .map_err(|e| RespError::Other("Cannot parse version number".to_owned()))?;
+        let version_str = std::str::from_utf8(version).map_err(parse_err)?;
         let version_num: u32 = version_str
             .parse()
-            .map_err(|e| RespError::Other("Cannot parse version number".to_owned()))?;
+            .map_err(|e| RespError::Other(format!("Cannot parse version number\n{:?}", e)))?;
 
         if version_num > 11 {
             return Err(RespError::Other(format!(
@@ -330,7 +341,7 @@ async fn read_string(reader: &mut BufReader<File>) -> Result<Vec<u8>, RespError>
         .await
         .map_err(|e| RespError::Other(format!("Unable to parse RDB file\n{:?}", e)))?;
     let encoding_type = first_byte >> 6;
-    println!("first_byte: {}\nlen: {}", first_byte, encoding_type);
+    // println!("first_byte: {}\nlen: {}", first_byte, encoding_type);
 
     match encoding_type {
         0b00 | 0b01 | 0b10 => {

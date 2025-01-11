@@ -8,6 +8,7 @@ use tokio::{
     io::{AsyncReadExt, BufReader},
     net::{TcpListener, TcpStream},
     sync::RwLock,
+    time,
 };
 
 use crate::{
@@ -37,7 +38,28 @@ impl Server {
             tokio::spawn(async move {
                 let _ = db_clone.write().await.load_from_rdb(config_clone).await;
             });
+            let config_clone = Arc::clone(&config);
+            let db_save_storage = Arc::clone(&db);
+            tokio::spawn(async move {
+                let mut interval_time = time::interval(Duration::from_secs(5));
+                loop {
+                    interval_time.tick().await;
+                    println!("Saving to rdb");
+                    let save_db = db_save_storage
+                        .write()
+                        .await
+                        .save_to_rdb(&config_clone)
+                        .await;
+                    match save_db {
+                        Ok(_) => {}
+                        Err(e) => {
+                            return e;
+                        }
+                    }
+                }
+            });
         }
+
         loop {
             let stream = self.listener.accept().await;
             match stream {
@@ -130,7 +152,14 @@ impl Server {
                             Value::SimpleError("Invalid number of arguments".to_owned())
                         }
                     }
-                    "keys" => db.read().await.keys(),
+                    "keys" => {
+                        let pattern = if args.len() > 0 {
+                            Self::unpack_bulk_string(args.first().unwrap().clone())?.to_lowercase()
+                        } else {
+                            "*".to_owned()
+                        };
+                        db.read().await.keys(pattern)
+                    }
                     _ => Value::SimpleError(format!("Cannot Handle command {}", command)),
                 }
             } else {

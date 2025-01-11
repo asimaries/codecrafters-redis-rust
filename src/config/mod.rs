@@ -19,7 +19,7 @@ impl Config {
     }
     
     pub fn has_rdb(&self) -> bool {
-        println!("dir: {:?}, dbfilename: {:?}", self.dir, self.dbfilename);
+        // println!("dir: {:?}, dbfilename: {:?}", self.dir, self.dbfilename);
         self.dir.is_some() && self.dbfilename.is_some()
     }
 
