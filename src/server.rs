@@ -29,9 +29,8 @@ impl Server {
         Self { listener }
     }
 
-    pub async fn run(&mut self) {
+    pub async fn run(&mut self, config: Arc<Config>) {
         let db = Arc::new(RwLock::new(Storage::new()));
-        let config = Arc::new(Config::new());
         if config.has_rdb() {
             let db_clone = Arc::clone(&db);
             let config_clone = Arc::clone(&config);

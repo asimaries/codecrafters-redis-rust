@@ -5,17 +5,18 @@ mod resp;
 mod server;
 mod storage;
 
-use std::fmt::Error;
+use std::{fmt::Error, sync::Arc};
 
 use crate::resp::resp::{parse_message, RespHandler, Value};
+use config::Config;
 use server::Server;
 use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
+    let config = Arc::new(Config::new());
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", config.port.clone().unwrap_or("6379".to_owned()))).await.unwrap();
     let mut server = Server::new(listener);
-
-    server.run().await;
+    server.run(config).await;
     Ok(())
 }
