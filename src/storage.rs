@@ -15,7 +15,7 @@ use tokio::{
 
 use crate::{
     config::Config,
-    resp::{resp::Value, RespError},
+    resp::{resp::Value, RespError}, server::unpack_bulk_string,
 };
 #[derive(Debug)]
 pub(crate) struct Item {
@@ -67,14 +67,6 @@ impl Storage {
             .collect::<Vec<Value>>();
 
         Value::Array(key_resp)
-    }
-    fn unpack_bulk_string(value: Value) -> Result<String, RespError> {
-        match value {
-            Value::BulkString(s) => Ok(s),
-            _ => Err(RespError::Other(format!(
-                "Expected Command to be a Bulk String"
-            ))),
-        }
     }
     pub async fn save_to_rdb(&self, config: &Config) -> Result<(), RespError> {
         if !config.has_rdb() {
@@ -128,7 +120,7 @@ impl Storage {
 
             write_string(
                 &mut writer,
-                Self::unpack_bulk_string(item.value.clone())
+                unpack_bulk_string(item.value.clone())
                     .unwrap()
                     .as_bytes(),
             )

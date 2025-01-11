@@ -91,24 +91,20 @@ impl Server {
                     "ping" => Value::SimpleString("PONG".to_owned()),
                     "echo" => args.first().unwrap().clone().to_owned(),
                     "set" => {
-                        let key = Self::unpack_bulk_string(args.get(0).unwrap().clone())?;
-                        let value = Self::unpack_bulk_string(args.get(1).unwrap().clone())?;
+                        let key = unpack_bulk_string(args.get(0).unwrap().clone())?;
+                        let value = unpack_bulk_string(args.get(1).unwrap().clone())?;
                         let mut ttl: Option<SystemTime> = None;
                         if args.len() > 3 {
-                            let units = Self::unpack_bulk_string(args.get(2).unwrap().clone())?
-                                .to_lowercase();
-                            let amount =
-                                match Self::unpack_bulk_string(args.get(3).unwrap().clone()) {
-                                    Ok(str) => str.parse::<u64>().map_err(|e| {
-                                        RespError::Other(format!(
-                                            "Unable to parse RDB file\n{:?}",
-                                            e
-                                        ))
-                                    })?,
-                                    Err(_) => {
-                                        return Err(RespError::Other(format!("unexpected expiry")))
-                                    }
-                                };
+                            let units =
+                                unpack_bulk_string(args.get(2).unwrap().clone())?.to_lowercase();
+                            let amount = match unpack_bulk_string(args.get(3).unwrap().clone()) {
+                                Ok(str) => str.parse::<u64>().map_err(|e| {
+                                    RespError::Other(format!("Unable to parse RDB file\n{:?}", e))
+                                })?,
+                                Err(_) => {
+                                    return Err(RespError::Other(format!("unexpected expiry")))
+                                }
+                            };
                             ttl = match units.as_str() {
                                 "px" => Some(SystemTime::now() + Duration::from_millis(amount)),
                                 "ex" => Some(SystemTime::now() + Duration::from_secs(amount)),
@@ -121,18 +117,17 @@ impl Server {
                         let a = db
                             .read()
                             .await
-                            .get(Self::unpack_bulk_string(args.first().unwrap().clone())?)
+                            .get(unpack_bulk_string(args.first().unwrap().clone())?)
                             .await;
                         a
                     }
                     "config" => {
                         if args.len() > 1 {
-                            let arg = Self::unpack_bulk_string(args.first().unwrap().clone())?
-                                .to_lowercase();
+                            let arg =
+                                unpack_bulk_string(args.first().unwrap().clone())?.to_lowercase();
                             match arg.as_str() {
                                 "get" => {
-                                    let param =
-                                        Self::unpack_bulk_string(args.get(1).unwrap().clone())?;
+                                    let param = unpack_bulk_string(args.get(1).unwrap().clone())?;
                                     let value = match param.as_str() {
                                         "dir" => Value::BulkString(
                                             config.dir.clone().unwrap_or_default(),
@@ -153,7 +148,7 @@ impl Server {
                     }
                     "keys" => {
                         let pattern = if args.len() > 0 {
-                            Self::unpack_bulk_string(args.first().unwrap().clone())?.to_lowercase()
+                            unpack_bulk_string(args.first().unwrap().clone())?.to_lowercase()
                         } else {
                             "*".to_owned()
                         };
@@ -173,19 +168,18 @@ impl Server {
     fn extract_command(value: Value) -> Result<(String, Vec<Value>), RespError> {
         match value {
             Value::Array(a) => Ok((
-                Self::unpack_bulk_string(a.first().unwrap().clone())?,
+                unpack_bulk_string(a.first().unwrap().clone())?,
                 a.into_iter().skip(1).collect(),
             )),
             _ => Err(RespError::Other(format!("Unexpected Command format"))),
         }
     }
-
-    fn unpack_bulk_string(value: Value) -> Result<String, RespError> {
-        match value {
-            Value::BulkString(s) => Ok(s),
-            _ => Err(RespError::Other(format!(
-                "Expected Command to be a Bulk String"
-            ))),
-        }
+}
+pub fn unpack_bulk_string(value: Value) -> Result<String, RespError> {
+    match value {
+        Value::BulkString(s) => Ok(s),
+        _ => Err(RespError::Other(format!(
+            "Expected Command to be a Bulk String"
+        ))),
     }
 }
